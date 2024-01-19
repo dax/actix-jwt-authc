@@ -107,11 +107,7 @@
 //!       "Authorization",
 //!       format!("Bearer {}", login_response.bearer_token),
 //!     ));
-//!     let resp: actix_web::Error = app.call(req.to_request()).await.err().unwrap();
-//!     ServiceResponse::new(
-//!       test::TestRequest::get().uri("/session").to_http_request(),
-//!       resp.error_response(),
-//!     )
+//!     app.call(req.to_request()).await.unwrap()
 //!   };
 //!   assert_eq!(StatusCode::UNAUTHORIZED, session_resp_after_logout.status());
 //!   Ok(())

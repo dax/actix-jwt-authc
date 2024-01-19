@@ -4,6 +4,7 @@ use std::marker::PhantomData;
 use std::rc::Rc;
 use std::sync::Arc;
 
+use actix_web::body::{EitherBody, MessageBody};
 #[cfg(feature = "session")]
 use actix_session::SessionExt;
 use actix_web::dev::{forward_ready, Service, ServiceRequest, ServiceResponse, Transform};
@@ -290,8 +291,9 @@ impl<S, B, ClaimsType> Transform<S, ServiceRequest> for AuthenticateMiddlewareFa
 where
     S: Service<ServiceRequest, Response = ServiceResponse<B>, Error = actix_web::Error> + 'static,
     ClaimsType: DeserializeOwned + 'static,
+    B: MessageBody + 'static,
 {
-    type Response = ServiceResponse<B>;
+    type Response = ServiceResponse<EitherBody<B>>;
     type Error = actix_web::Error;
     type Transform = AuthenticateMiddleware<S, ClaimsType>;
     type InitError = ();
@@ -328,8 +330,9 @@ impl<S, B, ClaimsType> Service<ServiceRequest> for AuthenticateMiddleware<S, Cla
 where
     ClaimsType: DeserializeOwned + 'static,
     S: Service<ServiceRequest, Response = ServiceResponse<B>, Error = actix_web::Error> + 'static,
+    B: MessageBody + 'static,
 {
-    type Response = ServiceResponse<B>;
+    type Response = ServiceResponse<EitherBody<B>>;
     type Error = actix_web::Error;
     type Future = LocalBoxFuture<'static, Result<Self::Response, Self::Error>>;
 
@@ -370,7 +373,7 @@ async fn authenticate<S, B, ClaimsType>(
     #[cfg(feature = "session")] jwt_session_key: Option<Arc<JWTSessionKey>>,
     jwt_authorization_header_prefixes: Option<Arc<Vec<String>>>,
     validation: &Validation,
-) -> Result<ServiceResponse<B>, actix_web::Error>
+) -> Result<ServiceResponse<EitherBody<B>>, actix_web::Error>
 where
     ClaimsType: DeserializeOwned + 'static,
     S: Service<ServiceRequest, Response = ServiceResponse<B>, Error = actix_web::Error> + 'static,
@@ -391,17 +394,19 @@ where
         if invalidated_jwts_state.read().await.0.contains(&jwt) {
             #[cfg(feature = "tracing")]
             trace!(jwt= ?jwt, "Invalidated JWT detected");
-            Err(Error::InvalidSession(format!(
+            return Ok(req.error_response(Error::InvalidSession(format!(
                 "Invalidated session. JWT [{jwt}] was already invalidated"
-            )))?;
+            ))).map_into_right_body());
         } else {
-            let decoded_claims = decode::<ClaimsType>(jwt_str, jwt_decoding_key, validation)
-                .map_err(|e| {
+            let decoded_claims = match decode::<ClaimsType>(jwt_str, jwt_decoding_key, validation) {
+                Ok(decoded) => decoded,
+                Err(e) => {
                     let error_message = e.to_string();
                     #[cfg(feature = "tracing")]
                     trace!("Claims failed decoding because of [{}]", error_message);
-                    Error::InvalidSession(error_message)
-                })?;
+                    return Ok(req.error_response(Error::InvalidSession(error_message)).map_into_right_body());
+                }
+            };
             #[cfg(feature = "tracing")]
             trace!("Claims successfully decoded");
 
@@ -412,7 +417,7 @@ where
         }
     }
     let res = svc.call(req).await?;
-    Ok(res)
+    Ok(res.map_into_left_body())
 }
 
 #[cfg_attr(feature = "tracing", tracing::instrument(level = "trace"))]
@@ -444,6 +449,7 @@ mod tests {
     use std::sync::Arc;
     use std::time::Duration;
 
+    use actix_web::body::BoxBody;
     #[cfg(feature = "session")]
     use actix_session::storage::CookieSessionStore;
     #[cfg(feature = "session")]
@@ -711,13 +717,9 @@ mod tests {
                 "Authorization",
                 format!("Bearer {}", login_response.bearer_token),
             ));
-            let resp = app.call(req.to_request()).await.err().unwrap();
+            let resp = app.call(req.to_request()).await.unwrap();
             (login_response, resp)
         };
-        let session_resp = ServiceResponse::new(
-            test::TestRequest::get().uri("/session").to_http_request(),
-            session_resp.error_response(),
-        );
         assert_eq!(actix_http::StatusCode::UNAUTHORIZED, session_resp.status());
         let session_response: crate::errors::ErrorResponse =
             test::read_body_json(session_resp).await;
@@ -769,14 +771,7 @@ mod tests {
 
         tokio::time::sleep(Duration::from_millis(100)).await;
 
-        let session_resp: actix_web::Error =
-            { app.call(session_req.to_request()).await.err().unwrap() };
-        let session_resp = {
-            ServiceResponse::new(
-                test::TestRequest::get().uri("/session").to_http_request(),
-                session_resp.error_response(),
-            )
-        };
+        let session_resp = app.call(session_req.to_request()).await.unwrap();
         assert_eq!(actix_http::StatusCode::UNAUTHORIZED, session_resp.status());
 
         let session_response: crate::errors::ErrorResponse =
@@ -828,14 +823,7 @@ mod tests {
 
         tokio::time::sleep(Duration::from_millis(100)).await;
 
-        let session_resp: actix_web::Error =
-            { app.call(session_req.to_request()).await.err().unwrap() };
-        let session_resp = {
-            ServiceResponse::new(
-                test::TestRequest::get().uri("/session").to_http_request(),
-                session_resp.error_response(),
-            )
-        };
+        let session_resp = app.call(session_req.to_request()).await.unwrap();
 
         assert_eq!(actix_http::StatusCode::UNAUTHORIZED, session_resp.status());
         let session_response: crate::errors::ErrorResponse =
@@ -857,7 +845,7 @@ mod tests {
         jwt_ttl: JWTTtl,
     ) -> Result<
         TestFixture<
-            impl Service<actix_http::Request, Response = ServiceResponse, Error = actix_web::Error>,
+            impl Service<actix_http::Request, Response = ServiceResponse<EitherBody<BoxBody>>, Error = actix_web::Error>,
         >,
         Box<dyn std::error::Error>,
     > {
