@@ -22,7 +22,7 @@ log = ["tracing/log"]
 futures-util = "0.3"
 tokio = { version = "1.19", features = ["sync"], default-features = false }
 actix-web = "4"
-actix-session = { version = "0.9", optional = true }
+actix-session = { version = "0.10", optional = true }
 jsonwebtoken = "9"
 serde = { version = "1.0", features = ["derive"] }
 derive_more = "0.99"
