@@ -5,11 +5,11 @@ use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Display, Error)]
 pub enum Error {
-    #[display(fmt = "Internal error")]
+    #[display("Internal error")]
     InternalError,
-    #[display(fmt = "Unauthenticated")]
+    #[display("Unauthenticated")]
     Unauthenticated,
-    #[display(fmt = "Invalid session [{}]", _0)]
+    #[display("Invalid session [{_0}]")]
     InvalidSession(#[error(not(source))] String),
 }
 
