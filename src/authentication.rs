@@ -1018,8 +1018,10 @@ mod tests {
 
     impl JwtSigningKeys {
         fn generate() -> Result<Self, Box<dyn std::error::Error>> {
-            let doc = Ed25519KeyPair::generate_pkcs8(&SystemRandom::new())?;
-            let keypair = Ed25519KeyPair::from_pkcs8(doc.as_ref())?;
+            let doc = Ed25519KeyPair::generate_pkcs8(&SystemRandom::new())
+                .map_err(|e| format!("{e}"))?;
+            let keypair = Ed25519KeyPair::from_pkcs8(doc.as_ref())
+                .map_err(|e| format!("{e}"))?;
             let encoding_key = EncodingKey::from_ed_der(doc.as_ref());
             let decoding_key = DecodingKey::from_ed_der(keypair.public_key().as_ref());
             Ok(JwtSigningKeys {
